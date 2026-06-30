@@ -34,6 +34,9 @@ fact-checking into reliable, auditable steps.
 ---
 
 ## Architecture
+
+```text
+
 User Input (News Article)
 │
 ▼
@@ -62,6 +65,7 @@ REAL / FAKE / INSUFFICIENT_EVIDENCE
 
 Confidence Score + Reasoning
 Human review flag (if confidence < 60)
+```
 
 
 All components are coordinated by a **root orchestrator agent** using ADK's 
@@ -93,6 +97,9 @@ communication via `transfer_to_agent`.
 ---
 
 ## Project Structure
+
+```text
+
 fakenews-guard/
 ├── app/
 │   ├── agent.py          # Orchestrator, fact_checker agent, and tools
@@ -105,6 +112,7 @@ fakenews-guard/
 ├── GEMINI.md             # AI-assisted development context
 ├── pyproject.toml        # Project dependencies
 └── README.md             # This file
+```
 
 ---
 
