@@ -1,8 +1,8 @@
 # FakeNewsGuard 🛡️
 
 > A multi-agent fake news detection system built with Google Agent Development 
-> Kit (ADK) 2.0. FakeNewsGuard uses a pipeline of specialized AI agents to 
-> analyze news articles, retrieve real-world evidence, and issue structured 
+> Kit (ADK) 2.0. FakeNewsGuard uses AI agents to analyze news articles, 
+> retrieve real-world evidence via live web search, and issue structured 
 > verdicts — REAL, FAKE, or INSUFFICIENT_EVIDENCE.
 
 ---
@@ -22,79 +22,60 @@ in real time. This means it can evaluate claims it has never seen before.
 ## Why Agents?
 
 A single LLM prompt cannot reliably:
-- Extract specific verifiable claims from noisy article text
-- Search the web for each claim independently  
-- Cross-reference evidence against claims
-- Issue a calibrated confidence score
 - Screen for adversarial inputs before processing
+- Extract specific verifiable claims from noisy article text
+- Search the web for each claim and weigh the evidence
+- Issue a calibrated, explainable verdict
 
 Each of these is a distinct cognitive task best handled by a **specialized 
-agent** with focused instructions and appropriate tools. The multi-agent 
-architecture makes each step transparent, testable, and improvable independently.
+agent or tool** with focused instructions. The architecture below decomposes 
+fact-checking into reliable, auditable steps.
 
 ---
 
 ## Architecture
 User Input (News Article)
-
 │
-
 ▼
-
-┌─────────────────────┐
-
-│  Security Gate      │  ← Prompt injection detection (plain Python, no LLM)
-
-│  check_security()   │    Blocks adversarial inputs before any AI processing
-
-└─────────┬───────────┘
-
+┌─────────────────────────┐
+│  check_security()       │  ← Plain Python tool, no LLM
+│  (direct tool)          │    Blocks prompt injection before any AI runs
+└─────────┬───────────────┘
 │ SAFE
-
 ▼
-
-┌─────────────────────┐
-
-│  Claim Extractor    │  ← LLM agent: extracts 3-5 verifiable factual claims
-
-│  extract_claims()   │    Focuses on statistics, dates, names, quotes
-
-└─────────┬───────────┘
-
+┌─────────────────────────┐
+│  fact_checker agent     │  ← LLM agent + Google Search grounding
+│                         │
+│  1. Extract 3-5 claims  │    Combines claim extraction and evidence
+│  2. Search each claim   │    retrieval in a single reasoning step
+│  3. SUPPORTS/CONTRADICTS│
+└─────────┬───────────────┘
 │
-
 ▼
-
-┌─────────────────────┐
-
-│  Evidence Retriever │  ← LLM agent + Google Search grounding
-
-│  [Google Search]    │    Searches the live web for each claim
-
-└─────────┬───────────┘
-
+┌─────────────────────────┐
+│  format_verdict()       │  ← Plain Python tool
+│  (direct tool)          │    Structures the final output consistently
+└─────────┬───────────────┘
 │
-
 ▼
+REAL / FAKE / INSUFFICIENT_EVIDENCE
 
-┌─────────────────────┐
+Confidence Score + Reasoning
+Human review flag (if confidence < 60)
 
-│  Verdict Agent      │  ← LLM agent: synthesizes claims + evidence
 
-│  format_verdict()   │    Outputs REAL / FAKE / INSUFFICIENT_EVIDENCE
+All components are coordinated by a **root orchestrator agent** using ADK's 
+sub-agent pattern for `fact_checker` and direct tool calls for 
+`check_security` and `format_verdict`. This implements Agent-to-Agent (A2A) 
+communication via `transfer_to_agent`.
 
-└─────────┬───────────┘
-
-│
-
-▼
-
-Final Verdict + Confidence Score + Reasoning
-
-(Human review flagged if confidence < 60)
-
-All agents are coordinated by a **root orchestrator** using ADK's sub-agent 
-pattern, implementing Agent-to-Agent (A2A) communication.
+> **Design note:** The architecture was originally a 4-agent pipeline 
+> (security gate, claim extractor, evidence retriever, verdict agent), each 
+> as a separate sub-agent. This was simplified to the current 2-component 
+> design after testing revealed that multiple sequential handoffs reduced 
+> orchestrator reliability. Combining claim extraction and evidence retrieval 
+> into one `fact_checker` agent, and using direct tool calls for security and 
+> verdict formatting, produced consistently complete pipeline runs.
 
 ---
 
@@ -102,38 +83,27 @@ pattern, implementing Agent-to-Agent (A2A) communication.
 
 | Concept | Implementation |
 |---|---|
-| **Multi-agent system (ADK)** | 4 specialized agents coordinated by an orchestrator |
-| **Agent-to-Agent (A2A)** | Orchestrator delegates via `transfer_to_agent` |
-| **Security features** | Prompt injection detection before any LLM processing |
+| **Multi-agent system (ADK)** | Orchestrator + `fact_checker` sub-agent, coordinated via ADK 2.0 |
+| **Agent-to-Agent (A2A)** | Orchestrator delegates to `fact_checker` via `transfer_to_agent` |
+| **Security features** | `check_security` tool detects prompt injection before any LLM call |
 | **Agent skills (agents-cli)** | Project scaffolded and managed via `google-agents-cli` |
-| **Human-in-the-loop** | Low confidence verdicts flagged for human review |
-| **Tool use** | `check_security`, `extract_claims`, `format_verdict`, Google Search |
+| **Human-in-the-loop** | Low confidence verdicts (`< 60`) flagged for human review |
+| **Tool use** | `check_security`, `format_verdict`, Google Search grounding |
 
 ---
 
 ## Project Structure
 fakenews-guard/
-
 ├── app/
-
-│   ├── agent.py          # All agent definitions, tools, and orchestrator
-
+│   ├── agent.py          # Orchestrator, fact_checker agent, and tools
 │   ├── init.py       # Exports app and root_agent for ADK web server
-
 │   └── app_utils/        # Telemetry and typing utilities
-
 ├── tests/
-
 │   ├── unit/             # Unit tests
-
 │   ├── integration/      # Integration tests
-
 │   └── eval/             # ADK evaluation datasets and config
-
 ├── GEMINI.md             # AI-assisted development context
-
 ├── pyproject.toml        # Project dependencies
-
 └── README.md             # This file
 
 ---
@@ -189,33 +159,39 @@ Paste any news article into the chat to receive a structured verdict.
 
 **Input:**
 Scientists have discovered that drinking 10 cups of coffee daily increases
-
 lifespan by 20 years, according to a study by Harvard University published
+last week. The study followed 5 million participants over 50 years and had
+a 100% success rate.
 
-last week. The study followed 5 million participants over 50 years.
-
-**Expected Output:**
+**Output:**
+Claim 1: Drinking 10 cups of coffee increases lifespan by 20 years
+→ CONTRADICTS: Harvard T.H. Chan School research shows moderate coffee
+consumption (3-5 cups) reduces premature death risk by 8-15%, not 20 years.
+Claim 2: Study conducted by Harvard, published last week
+→ CONTRADICTS: No such study found in Harvard publications.
+Claim 3: Study followed 5 million participants over 50 years
+→ CONTRADICTS: Harvard's largest cohort studies (Nurses' Health Study,
+Health Professionals Follow-Up Study) track ~280,000 participants
+combined, not 5 million. A 50-year, 5-million-person study is
+unprecedented in nutritional epidemiology.
+Claim 4: Study had a "100% success rate"
+→ CONTRADICTS: A "100% success rate" is scientifically meaningless in
+observational epidemiology — no legitimate peer-reviewed study would
+claim this.
 VERDICT: FAKE
-
-Confidence: 85/100
-
-Reasoning:
-
-Claim 1: "Harvard study followed 5 million people for 50 years"
-
-→ CONTRADICTED: No such study found in Harvard publications.
-Claim 2: "Coffee increases lifespan by 20 years"
-
-→ CONTRADICTED: No scientific evidence supports this magnitude of effect.
+Confidence: 92/100
+Reasoning: The article fabricates statistics, misrepresents scientific
+methodology, and invents a non-existent study attributed to Harvard
+University.
 Human review recommended: No
 
 ---
 
 ## Security Design
 
-FakeNewsGuard implements a **Security Gate** as the first node in the pipeline. 
-This is a plain Python function (no LLM) that scans for prompt injection 
-keywords before any AI agent sees the input.
+FakeNewsGuard implements a **Security Gate** as the first tool call in the 
+pipeline — `check_security()`. This is a plain Python function (no LLM) that 
+scans for prompt injection keywords before any AI agent sees the input.
 
 Detected threats include:
 - `"ignore instructions"` / `"ignore previous instructions"`
@@ -224,6 +200,10 @@ Detected threats include:
 
 If a threat is detected, the pipeline terminates immediately and returns a 
 BLOCKED response. No LLM tokens are consumed on adversarial inputs.
+
+This follows a key security principle: **security gates should not depend on 
+AI judgment.** An LLM asked to detect a jailbreak attempt might itself be 
+susceptible to that attempt. A plain Python function has no such vulnerability.
 
 ---
 
@@ -247,4 +227,4 @@ fact-checking accessible, transparent, and explainable to any user.
 
 > ⚠️ **Note:** This project uses the Google AI Studio free tier. 
 > High-traffic periods may cause temporary 503/429 errors from Google's 
-> model servers. If the agent is unresponsive, wait 60 seconds and retry.
+> model servers. If the agent is unresponsive, wait 60-120 seconds and retry.
